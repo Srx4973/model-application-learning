@@ -41,6 +41,15 @@ class Book(Base):
 # 创建表（第一次运行时会自动创建）
 Base.metadata.create_all(bind=engine)   ## 扫描Base下所有模型，生成并执行CREATE TABLE
 
+#3. 依赖：获取数据库会话(依赖注入)
+def get_db():
+    db = SessionLocal()  # 打开数据库连接
+    try:
+        yield db      # ← 把连接给路由函数用
+        # yield 在函数中间"暂停"，把值返回给调用方，等调用方用完后再回来执行后面的代码
+    finally:
+        db.close()    # ← 用完自动关闭
+
 
 '''为什么get_books_from_db这个函数不需要 async（异步）？
 现在的模式：
@@ -57,16 +66,7 @@ Base.metadata.create_all(bind=engine)   ## 扫描Base下所有模型，生成并
 
 '''
 
-# 依赖：获取数据库会话(依赖注入)
-def get_db():
-    db = SessionLocal()  # 打开数据库连接
-    try:
-        yield db      # ← 把连接给路由函数用
-        # yield 在函数中间"暂停"，把值返回给调用方，等调用方用完后再回来执行后面的代码
-    finally:
-        db.close()    # ← 用完自动关闭
-
-# 新接口：从数据库查询所有图书  SQLAlchemy ORM（对象关系映射）
+# 4.新接口：从数据库查询所有图书  SQLAlchemy ORM（对象关系映射）
 @app.get("/books/db")
 def get_books_from_db(db: Session = Depends(get_db)):  #传入数据库会话对象（Session）
     books = db.query(Book).all()     #query 是数据库会话（db）提供的一个“查询构建器”
@@ -91,7 +91,7 @@ db.query(Book) 只是搭建了查询架子，并没有真正去数据库跑一�
 
 '''
 
-
+#5.插入图书接口
 class BookCreate(BaseModel):
     title : str
     author : str
@@ -102,10 +102,10 @@ def add(book : BookCreate, db: Session = Depends(get_db)):
     # 1. 创建 Book 实例（将请求体数据转为 ORM 对象）
     #a. 如果book本身是字典可以用 **解包
     new_book = Book(**book.dict())# 如果 book 是 Pydantic 模型
-    # 或 new_book = BookCreate(**book)   # 如果 book 是普通字典
+    # 或 new_book = Book(**book)   # 如果 book 是普通字典
 
     #b. 直接使用关键字参数
-    #new_book = BookCreate(title=book.title, author=book.author)
+    #new_book = Book(title=book.title, author=book.author)
 
     #2.添加到会话（暂存到内存）
     db.add(new_book)
