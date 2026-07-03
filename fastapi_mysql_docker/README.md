@@ -40,7 +40,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]   # 容器启
 
 ```bash
 docker build -t 镜像名 .      # 构建镜像（注意末尾的点表示当前目录）
-docker run -d -p 宿主机端口:容器端口 --name 容器名 镜像名
+docker run -d -p 宿主机端口:容器端口 --name 容器名 镜像名    #运行镜像
 ```
 
 - `-d`：后台运行  
