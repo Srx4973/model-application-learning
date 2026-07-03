@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends,HTTPException
@@ -8,7 +9,7 @@ from sqlalchemy.orm import sessionmaker, Session,declarative_base
 app = FastAPI()
 
 #1. 数据库连接字符串（注意密码和数据库名）
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:123456@localhost:3306/fastapi_demo?charset=utf8mb4"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:123456@localhost:3306/fastapi_demo?charset=utf8mb4")
 #mysql+pymysql	用 pymysql 驱动连 MySQL
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 

@@ -1,0 +1,30 @@
+services:
+  # 1. MySQL 数据库服务
+  mysql:
+    image: mysql:8.0
+    container_name: fastapi-mysql   # 容器名（很重要，FastAPI 通过这个名字连接它）
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: fastapi_demo  # 容器启动时自动创建这个数据库
+    ports:
+      - "3306:3306"                 # 映射端口到宿主机（方便你用 Navicat 等工具查看）
+    volumes:
+      - mysql_data:/var/lib/mysql   # 持久化数据，重启不丢失
+    restart: always
+        #/var/lib/mysql是 MySQL 官方镜像（mysql:8.0）写死的数据存放目录。所有数据库文件（表结构、数据）默认都存在容器的这个路径下
+  # 2. FastAPI 应用服务
+  app:                      # build: . 时，Compose 会自动在当前目录（.）下寻找一个名为 Dockerfile（无后缀）的文件。
+    build: .                         # 使用当前目录的 Dockerfile 构建镜像
+    container_name: fastapi-app
+    ports:
+      - "8000:8000"                  # 映射端口到宿主机
+    depends_on:
+      - mysql                        # 确保 mysql 服务先启动
+    environment:
+      - DATABASE_URL=mysql+pymysql://root:123456@mysql:3306/fastapi_demo?charset=utf8mb4
+    restart: always
+
+volumes:
+  mysql_data:   # 声明数据卷，让 MySQL 数据持久化
+
+#volumes：  “数据存哪里”。让 MySQL 的数据存到电脑硬盘上，重启容器不丢。
