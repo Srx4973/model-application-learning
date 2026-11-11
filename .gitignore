@@ -1,12 +1,11 @@
-# created by virtualenv automatically
+# 虚拟环境
+include/
 Lib/
 Scripts/
 pyvenv.cfg
-.idea/
-__pycache__/
-*.pyc
-# SSH 密钥文件
-srx15835984111*
-*.pub
-*_rsa
-*_ed25519
+# 数据库文件
+*.db
+*.sqlite3
+.env
+chroma_db_local/
+chroma_db_online/

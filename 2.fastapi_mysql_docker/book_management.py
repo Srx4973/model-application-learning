@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from datetime import datetime
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends,HTTPException
@@ -9,7 +10,8 @@ from sqlalchemy.orm import sessionmaker, Session,declarative_base
 app = FastAPI()
 
 #1. 数据库连接字符串（注意密码和数据库名）
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:123456@localhost:3306/fastapi_demo?charset=utf8mb4")
+load_dotenv() # 加载 .env 文件
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 #os.getenv安全读取操作系统环境变量，不存在则返回自定义默认路径
 
 #mysql+pymysql	用 pymysql 驱动连 MySQL
