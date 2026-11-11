@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>RAG 流式问答测试</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        #answer { border: 1px solid #ccc;
+            padding: 20px;
+            min-height: 100px;
+            white-space: pre-wrap;
+            margin-top: 20px;
+            background: #f9f9f9;
+            white-space: pre-wrap; /* 它会自动识别换行符 */}
+        input { width: 80%; padding: 10px; font-size: 16px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h2>RAG 文档问答（打字机效果演示）</h2>
+    <input type="text" id="question" value="这份文档主要讲了什么？" placeholder="输入你的问题">
+    <button onclick="ask()">发送</button>
+
+    <div id="answer">等待回答...</div>
+
+    <script>
+        async function ask() {
+            const question = document.getElementById('question').value;
+            const answerDiv = document.getElementById('answer');
+            answerDiv.innerText = ''; // 清空上一次的回答
+
+            try {
+                // 使用 fetch 接收流式数据
+                const response = await fetch('/ask/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question: question })
+                });
+
+                // 获取读取器（水管）
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+
+                // 不断读取水流
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    // 解码并追加到页面
+                    let chunk = decoder.decode(value, { stream: true });
+                    // 核心：把 data: 和前后的换行符替换掉，只留纯文字
+                    chunk = chunk.replace(/data: /g, "");
+                    chunk = chunk.replace(/\n\n/g, "");
+
+                    // 因为我们之前发的是纯文本 delta，这里直接追加
+                    answerDiv.innerText += chunk;
+                }
+            } catch (error) {
+                answerDiv.innerText = "请求出错：" + error;
+            }
+        }
+    </script>
+</body>
+</html>
