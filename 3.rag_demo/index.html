@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>RAG 流式问答测试</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        #answer { border: 1px solid #ccc;
+            padding: 20px;
+            min-height: 100px;
+            white-space: pre-wrap;
+            margin-top: 20px;
+            background: #f9f9f9;
+            white-space: pre-wrap; /* 它会自动识别换行符 */}
+        input { width: 80%; padding: 10px; font-size: 16px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h2>RAG 文档问答（流式效果演示）</h2>
+    <input type="text" id="question" value="这份文档主要讲了什么？" placeholder="输入你的问题">
+    <button onclick="ask()">发送</button>
+
+    <div id="answer">等待回答...</div>
+
+    <script>
+        async function ask() {
+            const question = document.getElementById('question').value;
+            const answerDiv = document.getElementById('answer');
+            answerDiv.innerText = ''; // 清空上一次的回答
+
+            try {
+                // 使用 fetch 接收流式数据
+                const response = await fetch('/ask/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question: question })
+                });
+
+                // 获取读取器（水管）
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+
+                // 不断读取水流
+                let buffer = "";
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    // 解码并追加到缓冲区
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 按 SSE 标准，两个换行符代表一个事件的结束
+                    let parts = buffer.split('\n\n');
+                    // 最后一个 parts 可能是不完整的，弹出来留到下一轮
+                    buffer = parts.pop();
+
+                    for (let part of parts) {
+                        // 如果是以 data: 开头，提取后面的正文
+                        if (part.startsWith('data: ')) {
+                            let text = part.substring(6);
+                            // 兼容处理：去掉大模型生成文本里可能带的多余换行
+                            text = text.replace(/\ndata: /g, "\n");
+
+                            // 安全追加（绝不误删正文里本身的 data: 或空行）
+                            answerDiv.innerText += text;
+                        }
+                    }
+                }
+                // whlie循环结束后 buffer 残留处理
+                if (buffer.trim() && buffer.startsWith('data: ')) {
+                    let text = buffer.substring(6).replace(/\ndata: /g, "\n");
+                    answerDiv.innerText += text;
+                }
+            } catch (error) {
+                answerDiv.innerText = "请求出错：" + error;
+            }
+        }
+    </script>
+</body>
+</html>
