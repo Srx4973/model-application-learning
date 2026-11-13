@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent 智能问答测试</title>
+    <!-- 引入 Markdown 渲染库 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background-color: #f7f9fc; }
+        h2 { text-align: center; color: #2c3e50; margin-bottom: 30px; }
+        .input-container { display: flex; gap: 10px; margin-bottom: 15px; }
+        input[type="text"] { flex: 1; padding: 15px; font-size: 16px; border: 1px solid #dce1e8; border-radius: 8px; outline: none; box-shadow: 0 2px 5px rgba(0,0,0,0.02); }
+        button { padding: 15px 30px; font-size: 16px; font-weight: bold; cursor: pointer; background-color: #3498db; color: white; border: none; border-radius: 8px; }
+        button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+
+        /* 状态栏：显示工具调用进度 */
+        #status-bar { font-size: 13px; color: #7f8c8d; background: #e8f4f8; padding: 10px; border-radius: 6px; margin-bottom: 10px; display: none; border-left: 4px solid #3498db;}
+
+        /* 正文区 */
+        #answer { border: 1px solid #dce1e8; padding: 25px; min-height: 200px; background: #ffffff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); color: #333; font-size: 15px; line-height: 1.7; }
+
+        /* Markdown 里面的代码块样式 */
+        #answer pre { background: #2b2b2b; color: #f8f8f2; padding: 15px; border-radius: 6px; overflow-x: auto; }
+        #answer code { font-family: Consolas, Monaco, monospace; }
+        #answer h2, #answer h3 { color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <h2>🤖 Agent 智能问答</h2>
+
+    <div class="input-container">
+        <input type="text" id="question" value="帮我查查太原的天气，另外大语言模型的定义是什么？" placeholder="输入你的问题...">
+        <button id="sendBtn" onclick="ask()">发送</button>
+    </div>
+
+    <!-- 状态栏 -->
+    <div id="status-bar"></div>
+
+    <!-- 正文区 -->
+    <div id="answer">等待回答...</div>
+
+    <script>
+        async function ask() {
+            const question = document.getElementById('question').value;
+            const answerDiv = document.getElementById('answer');
+            const statusBar = document.getElementById('status-bar');
+            const sendBtn = document.getElementById('sendBtn');
+
+            if (!question.trim()) return;
+
+            answerDiv.innerHTML = '';
+            statusBar.style.display = 'none';
+            statusBar.innerText = '';
+            sendBtn.disabled = true;
+            sendBtn.innerText = '思考中...';
+
+            let fullMarkdown = ""; // 存放完整正文
+
+            try {
+                const response = await fetch('/agent/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    let parts = buffer.split('\n\n');
+                    buffer = parts.pop();
+
+                    for (let part of parts) {
+                        if (part.startsWith('data: ')) {
+                            let text = part.substring(6);
+                            text = text.replace(/\ndata: /g, "\n");
+                            if (text === '[DONE]') continue;
+
+                            // 🔥 核心：判断是系统状态还是正文
+                            if (text.startsWith('[SYS]')) {
+                                statusBar.style.display = 'block';
+                                statusBar.innerText += text.replace('[SYS] ', '') + "\n";
+                            } else {
+                                fullMarkdown += text;
+                                // 实时把 Markdown 渲染成 HTML
+                                answerDiv.innerHTML = marked.parse(fullMarkdown);
+                                answerDiv.scrollTop = answerDiv.scrollHeight;
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                answerDiv.innerHTML = "<span style='color:red'>请求出错：" + error + "</span>";
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerText = '发送';
+                // 生成完毕后，把状态栏隐藏掉，保持页面清爽
+                setTimeout(() => { statusBar.style.display = 'none'; }, 2000);
+            }
+        }
+
+        document.getElementById('question').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') ask();
+        });
+    </script>
+</body>
+</html>

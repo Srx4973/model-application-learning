@@ -1,3 +1,7 @@
+.idea/
+__pycache__/
+*.pyc
+*.db
 # 虚拟环境
 include/
 Lib/

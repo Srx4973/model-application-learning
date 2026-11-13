@@ -8,16 +8,12 @@ import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
 from chromadb import PersistentClient
-from chromadb.utils import embedding_functions
 from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 # ---------- 配置 ----------
 from dotenv import load_dotenv
 load_dotenv()
-
-
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 # 大模型（生成）的配置
 MODEL_NAME = "qiniu/conatus-free"
@@ -73,19 +69,6 @@ collection = client.get_or_create_collection(
     embedding_function=embedding_fn,
     metadata = {"hnsw:space": "cosine"}  #使用余弦距离，余弦相似度（Cosine）
 )
-
-# ---------- FastAPI 应用 ----------
-app = FastAPI(title="RAG 文档问答系统")
-
-# 请求体模型
-class AskRequest(BaseModel):
-    question: str
-
-# 响应体模型
-class AskResponse(BaseModel):
-    answer: str
-    sources: list[str]
-
 
 # ---------- 检索函数 ----------
 def retrieve(query, n_results):
@@ -259,6 +242,19 @@ def ask_question_stream(question: str):
     source_text = "\n\n参考来源：\n" + "\n".join(source_info)
     safe_sources = source_text.replace("\n", "\ndata: ")
     yield f"data: {safe_sources}\n\n"
+
+
+# ---------- FastAPI 应用 ----------
+app = FastAPI(title="RAG 文档问答系统")
+
+# 请求体模型
+class AskRequest(BaseModel):
+    question: str
+
+# 响应体模型
+class AskResponse(BaseModel):
+    answer: str
+    sources: list[str]
 
 # ---------- 接口 ----------
 # 加一个路由来返回 HTML 页面

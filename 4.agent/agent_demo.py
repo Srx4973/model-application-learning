@@ -1,3 +1,22 @@
+import requests
+import json
+import time
+import os
+from dotenv import load_dotenv
+from chromadb import PersistentClient
+
+# 配置
+load_dotenv()
+# 大模型的配置
+API_KEY = os.getenv("DEEPSEEK_API_KEY")
+URL = "https://api.qnaigc.com/v1/chat/completions"
+MODEL = "qiniu/conatus-free"
+
+# 向量模型（检索）的配置
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY")
+EMBEDDING_URL  = "https://api.siliconflow.cn/v1/embeddings"
+EMBEDDING_MODEL = "BAAI/bge-m3"
+
 # 工具 1：天气查询（假装能查，先返回假数据）
 def get_weather(city: str) -> str:
     # 真实场景下，这里会去调高德/百度的天气API
@@ -14,6 +33,104 @@ def calculate(expression: str) -> str:
     except Exception as e:
         return f"计算失败：{e}"
 
+#工具 3： rag
+# ---------- 加载模型（线上） ----------
+class OnlineEmbeddingFunction:
+    @staticmethod
+    def name() -> str:
+        return "online_bge_m3"
+
+    def __call__(self, input):
+        # 容错处理：ChromaDB 有时传字符串，有时传列表，统一转成列表
+        if isinstance(input, str):
+            input = [input]
+
+        # 调用在线 API 获取向量
+        headers = {"Authorization": f"Bearer {EMBEDDING_API_KEY}"}
+        data = {"model":EMBEDDING_MODEL, "input": input}
+        resp = requests.post(EMBEDDING_URL, headers=headers, json=data)
+
+        # 检查状态码（防止 Key 填错或者欠费导致解析失败）
+        if resp.status_code != 200:
+            print(f"Embedding API 报错: {resp.text}")
+            return [[0.0] * 1024 for _ in input]  # 报错兜底，返回全0向量，防止程序直接崩掉
+
+        # 返回向量列表
+        return [item["embedding"] for item in resp.json()["data"]]
+    #专门给查询用的方法
+    def embed_query(self, input):
+        return self.__call__(input)
+
+    # 专门给文档入库用的方法（有些版本需要）
+    def embed_documents(self, input):
+        return self.__call__(input)
+
+embedding_fn = OnlineEmbeddingFunction()
+
+# ---------- 连接 ChromaDB ----------
+client = PersistentClient(path="../3.rag/chroma_db_online")
+collection = client.get_collection(
+    name="pdf_docs",
+    embedding_function=embedding_fn
+)
+
+# 这是之前的 RAG 检索逻辑，
+def search_documents(query: str) -> str:
+    results = collection.query(query_texts=[query], n_results=3)
+    docs = results['documents'][0]
+    metadatas = results['metadatas'][0]
+    distances = results['distances'][0]
+
+    # 过滤：只保留距离小于 1.5 的块
+    valid = [(d, m, dist) for d, m, dist in zip(docs, metadatas, distances) if dist < 1.5]
+    if not valid:
+        return "根据当前文档无法回答。"
+
+    docs, metadatas, _ = zip(*valid)
+
+    # 拼接上下文时，顺便提取页码信息
+    context_parts = []
+    source_info = []
+    for i, (doc, meta) in enumerate(zip(docs, metadatas)):
+        page = meta.get('page', '未知')
+        context_parts.append(f"[片段{i + 1}] {doc}")
+        source_info.append(f"片段{i + 1} 来自第 {page} 页")
+
+    context = "\n\n".join(context_parts)
+    sources = "\n".join(source_info)
+
+# 2. 构造 Prompt
+    prompt = f"""请基于以下上下文回答问题。如果上下文不包含相关信息，请说“根据当前文档无法回答”。
+
+上下文：
+{context}
+
+问题：{query}
+回答："""
+
+    # 3. 调用 API
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3,  # 降低随机性，更严谨
+        "max_tokens": 500
+    }
+    resp = requests.post(URL, headers=headers, json=data)
+    if resp.status_code == 200:
+        answer = resp.json()["choices"][0]["message"]["content"]
+        # 在回答末尾强制附加引用来源
+        return f"{answer}\n\n 参考来源：\n{sources}"
+    else:
+        return f"API 请求失败：{resp.text}"
+
+
+#给大模型的说明书
 tools = [
     {
         "type": "function",
@@ -48,19 +165,59 @@ tools = [
                 "required": ["expression"],
             },
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": "当用户询问关于大模型、论文、技术文档、课程内容等专业知识时，使用此工具检索本地知识库",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "用户的问题或检索关键词",
+                    }
+                },
+                "required": ["query"],
+            },
+        }
     }
 ]
-import requests
-import json
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
-API_KEY = os.getenv("DEEPSEEK_API_KEY")
-URL = "https://api.qnaigc.com/v1/chat/completions"
-MODEL = "qiniu/conatus-free"
+#封装带重试的请求函数
+def safe_request_llm(data, max_retries=3, wait_time=20):
+    """带自动重试机制的大模型请求函数"""
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(URL, headers={"Authorization": f"Bearer {API_KEY}"}, json=data, timeout=60)
+            response_data = resp.json()
 
+            # 如果返回了 error 字段（例如限流、余额不足等）
+            if "error" in response_data:
+                error_msg = response_data['error']['message']
+                print(f" 触发异常：{error_msg}")
+                if attempt < max_retries - 1:
+                    print(f"等待 {wait_time} 秒后进行第 {attempt + 1} 次重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print("已达到最大重试次数。")
+                    return None
 
+            # 没有 error，直接返回结果
+            return response_data
+        #如果网络问题
+        except Exception as e:
+            print(f" 网络请求异常：{e}")
+            if attempt < max_retries - 1:
+                print(f" 等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+            else:
+                return None
+    return None
+
+#大模型决策
 def ask_agent(user_question):
     messages = [{"role": "user", "content": user_question}]
 
@@ -72,8 +229,10 @@ def ask_agent(user_question):
         "temperature": 0.1
     }
 
-    resp = requests.post(URL, headers={"Authorization": f"Bearer {API_KEY}"}, json=data)
-    response_data = resp.json()
+    response_data = safe_request_llm(data)
+    if not response_data:
+        return "系统繁忙，请稍后再试。（第一次请求失败）"
+
     message = response_data["choices"][0]["message"]
 
     # 2. 判断大模型是不是要调工具
@@ -93,6 +252,8 @@ def ask_agent(user_question):
                 result = get_weather(args["city"])
             elif func_name == "calculate":
                 result = calculate(args["expression"])
+            elif func_name == "search_documents":  # rag文档
+                result = search_documents(args["query"])
             else:
                 result = "未知工具"
 
@@ -108,8 +269,11 @@ def ask_agent(user_question):
         # 第二次请求不需要再传 tools 了
         data.pop("tools", None)
 
-        final_resp = requests.post(URL, headers={"Authorization": f"Bearer {API_KEY}"}, json=data)
-        final_answer = final_resp.json()["choices"][0]["message"]["content"]
+        final_response_data = safe_request_llm(data)
+        if not final_response_data:
+            return "工具执行完毕，但总结生成失败（第二次请求被限流，请稍后再试）。"
+
+        final_answer = final_response_data["choices"][0]["message"]["content"]
         return final_answer
 
     else:
@@ -118,12 +282,15 @@ def ask_agent(user_question):
 
 
 if __name__ == "__main__":
-    # 测试 1：需要查天气
-    print("用户：太原今天天气怎么样？")
-    print("AI: ", ask_agent("太原今天天气怎么样？"))
+    questions = [
+        "太原今天天气怎么样？",  # 应该触发天气
+        "123 * 456 等于多少？",  # 应该触发计算器
+        "大语言模型是什么？",  # 应该触发 RAG 检索
+        "帮我查查太原的天气，另外大语言模型的定义是什么？"  # 应该同时触发两个工具！
+    ]
 
-    print("\n" + "=" * 30 + "\n")
-
-    # 测试 2：需要计算
-    print("用户：帮我算一下 123 乘 456 等于多少？")
-    print("AI: ", ask_agent("帮我算一下 123 乘 456 等于多少？"))
+    for q in questions:
+        print("\n" + "=" * 40)
+        print(f"用户：{q}")
+        answer = ask_agent(q)
+        print(f"AI: {answer}")
