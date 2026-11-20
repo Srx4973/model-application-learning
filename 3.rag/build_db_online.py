@@ -7,7 +7,6 @@ import os
 import requests
 import pymupdf
 from chromadb import PersistentClient
-from chromadb.utils import embedding_functions
 
 # ---------- 配置 ----------
 from dotenv import load_dotenv
